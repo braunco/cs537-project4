@@ -49,6 +49,10 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int cpu;                     // To track the CPU usage of the process
+  int priority;                // To store the priority of the process
+  int nice;                    // To store the nice value of the process
+  int sleep_ticks;             // Number of ticks to sleep
 };
 
 // Process memory is laid out contiguously, low addresses first:
@@ -56,3 +60,8 @@ struct proc {
 //   original data and bss
 //   fixed-size stack
 //   expandable heap
+
+extern struct {
+  struct spinlock lock;
+  struct proc proc[NPROC];
+} ptable;

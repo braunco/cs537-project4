@@ -89,6 +89,11 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
 
+  // Initialize CPU, priority, and nice values for the new process
+  p->cpu = 0;
+  p->priority = 0;
+  p->nice = 0;
+
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -307,7 +312,7 @@ wait(void)
     }
 
     // Wait for children to exit.  (See wakeup1 call in proc_exit.)
-    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+    sleep(curproc, &ptable.lock, -1);  //DOC: wait-sleep
   }
 }
 
@@ -323,8 +328,10 @@ void
 scheduler(void)
 {
   struct proc *p;
+  struct proc *selected_p; // To keep track of the selected process
   struct cpu *c = mycpu();
   c->proc = 0;
+  static struct proc *last = 0; // To remember the last process that was run
   
   for(;;){
     // Enable interrupts on this processor.
@@ -332,9 +339,28 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+    selected_p = 0; // Reset selected process for each scheduling cycle
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
+      if(!selected_p || p->priority < selected_p->priority)
+        selected_p = p;
+    }
+
+    // If not found in the first pass (after last), check from the beginning 
+    if(!selected_p) {
+      for(p = ptable.proc; p < last; p++){
+        if(p->state != RUNNABLE)
+          continue;
+        if(!selected_p || p->priority < selected_p->priority)
+          selected_p = p;
+      }
+    }
+
+    // If a process is selected, run it
+    if(selected_p) {
+      p = selected_p;
+      last = p; // Remember the last process that was run
 
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
@@ -415,9 +441,16 @@ forkret(void)
 // Atomically release lock and sleep on chan.
 // Reacquires lock when awakened.
 void
-sleep(void *chan, struct spinlock *lk)
+sleep(void *chan, struct spinlock *lk, int n)
 {
   struct proc *p = myproc();
+
+  if (n == -1) {
+    // Indefinite sleep; set sleep_ticks to 0
+    p->sleep_ticks = 0;
+  } else {
+    p->sleep_ticks = n;
+  }
   
   if(p == 0)
     panic("sleep");
@@ -436,6 +469,7 @@ sleep(void *chan, struct spinlock *lk)
     release(lk);
   }
   // Go to sleep.
+  p->sleep_ticks = n; // N is currently undefined - need to add as a parameter to the function
   p->chan = chan;
   p->state = SLEEPING;
 
@@ -530,5 +564,16 @@ procdump(void)
         cprintf(" %p", pc[i]);
     }
     cprintf("\n");
+  }
+}
+
+// Adding function
+void recalculate_priority(void) {
+  struct proc *p;
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if(p->state != UNUSED) {
+      p->cpu = p->cpu / 2;
+      p->priority = p->cpu / 2 + p->nice;
+    }
   }
 }

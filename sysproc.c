@@ -6,6 +6,7 @@
 #include "memlayout.h"
 #include "mmu.h"
 #include "proc.h"
+#include "psched.h"
 
 int
 sys_fork(void)
@@ -88,4 +89,48 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+int
+sys_nice(void)
+{
+  int n;
+  if(argint(0, &n) < 0)  // Fetch the integer argument of the syscall
+    return -1;
+
+  if(n < 0 || n > 20)  // Check if the nice value is within the valid range
+    return -1;
+
+  struct proc *curproc = myproc();
+  int old_nice = curproc->nice;
+  curproc->nice = n;
+
+  return old_nice;  // Return the old nice value
+}
+
+int
+sys_getschedstate(void)
+{
+  struct pschedinfo *psi;
+  struct proc *p;
+  int i = 0;
+
+  // Fetch the pointer to the pschedinfo structure from the user space.
+  if(argptr(0, (void*)&psi, sizeof(*psi)) < 0)
+    return -1;
+
+  // Acquire the ptable lock to safely access process information.
+  acquire(&ptable.lock);
+
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++, i++) {
+    psi->inuse[i] = (p->state != UNUSED);
+    psi->priority[i] = p->priority;
+    psi->nice[i] = p->nice;
+    psi->pid[i] = p->pid;
+    psi->ticks[i] = p->cpu;  
+
+  // Release the ptable lock.
+  release(&ptable.lock);
+
+  return 0;
 }
