@@ -8,11 +8,6 @@
 #include "traps.h"
 #include "spinlock.h"
 
-extern struct {
-  struct spinlock lock;
-  struct proc proc[NPROC];
-} ptable;
-
 // Interrupt descriptor table (shared by all CPUs).
 struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
@@ -56,27 +51,6 @@ trap(struct trapframe *tf)
     if(cpuid() == 0){
       acquire(&tickslock);
       ticks++;
-
-      // Decrement sleep_ticks for all sleeping processes
-      struct proc *p;
-      for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-        if(p->state == SLEEPING && p->sleep_ticks > 0){
-          p->sleep_ticks--;
-          if(p->sleep_ticks == 0)
-            p->state = RUNNABLE;
-        }
-      }
-      
-      // Recalculate priorities every 100 ticks
-      if(ticks % 100 == 0){
-        for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-          if(p->state != UNUSED){
-            p->cpu = decay(p->cpu);
-            p->priority = p->cpu/2 + p->nice;
-          }
-        }
-      }
-
       wakeup(&ticks);
       release(&tickslock);
     }

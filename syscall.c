@@ -6,6 +6,7 @@
 #include "proc.h"
 #include "x86.h"
 #include "syscall.h"
+#include "psched.h"
 
 // User code makes a system call with INT T_SYSCALL.
 // System call number in %eax.
@@ -129,7 +130,7 @@ static int (*syscalls[])(void) = {
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
 [SYS_nice]    sys_nice,
-[SYS_getschedstate]   sys_getschedstate,
+[SYS_getschedstate] sys_getschedstate,
 };
 
 void

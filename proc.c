@@ -89,10 +89,11 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
 
-  // Initialize CPU, priority, and nice values for the new process
+  // Initialize new fields
   p->cpu = 0;
-  p->priority = 0;
   p->nice = 0;
+  p->priority = 0;
+  p->ticksleft = 0;
 
   release(&ptable.lock);
 
@@ -312,8 +313,25 @@ wait(void)
     }
 
     // Wait for children to exit.  (See wakeup1 call in proc_exit.)
-    sleep(curproc, &ptable.lock, -1);  //DOC: wait-sleep
+    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
   }
+}
+
+/*
+// Decay Function
+int
+decay(int cpu)
+{
+  return cpu / 2;
+}
+*/
+
+// Priority Recalculation Function
+void
+recalculate_priority(struct proc *p)
+{
+  //cprintf("CPU value: %d\n", p->cpu);
+  p->priority = p->cpu / 2 + p->nice;
 }
 
 //PAGEBREAK: 42
@@ -324,62 +342,66 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
+
 void
 scheduler(void)
 {
   struct proc *p;
-  struct proc *selected_p; // To keep track of the selected process
   struct cpu *c = mycpu();
   c->proc = 0;
-  static struct proc *last = 0; // To remember the last process that was run
   
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
+    int difference;
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    selected_p = 0; // Reset selected process for each scheduling cycle
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+
+    // Assume a very high value as the initial highest priority         ADDED
+    //int highest_priority = 1024; // Can change this number
+
+    // First pass: Find the highest priority among all RUNNABLE processes
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
       if(p->state != RUNNABLE)
         continue;
-      if(!selected_p || p->priority < selected_p->priority)
-        selected_p = p;
-    }
-
-    // If not found in the first pass (after last), check from the beginning 
-    if(!selected_p) {
-      for(p = ptable.proc; p < last; p++){
-        if(p->state != RUNNABLE)
-          continue;
-        if(!selected_p || p->priority < selected_p->priority)
-          selected_p = p;
-      }
-    }
-
-    // If a process is selected, run it
-    if(selected_p) {
-      p = selected_p;
-      last = p; // Remember the last process that was run
-
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+      
+      difference = p->cpu;
+        // Switch to chosen process.  It is the process's job
+        // to release ptable.lock and then reacquire it
+        // before jumping back to us.
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
 
+
       swtch(&(c->scheduler), p->context);
       switchkvm();
+
+      difference = ticks - difference;
+      p->cpu += difference;
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
     }
+
+    
+    // Priority recalculation
+    if (ticks % 100 == 0) {
+      for(int i = 0; i < NPROC; i++) {
+        recalculate_priority(&ptable.proc[i]);
+      }
+       
+    }
+    
     release(&ptable.lock);
 
   }
 }
+
+
+
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
@@ -441,16 +463,9 @@ forkret(void)
 // Atomically release lock and sleep on chan.
 // Reacquires lock when awakened.
 void
-sleep(void *chan, struct spinlock *lk, int n)
+sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-
-  if (n == -1) {
-    // Indefinite sleep; set sleep_ticks to 0
-    p->sleep_ticks = 0;
-  } else {
-    p->sleep_ticks = n;
-  }
   
   if(p == 0)
     panic("sleep");
@@ -469,10 +484,9 @@ sleep(void *chan, struct spinlock *lk, int n)
     release(lk);
   }
   // Go to sleep.
-  p->sleep_ticks = n; // N is currently undefined - need to add as a parameter to the function
   p->chan = chan;
   p->state = SLEEPING;
-
+  
   sched();
 
   // Tidy up.
@@ -493,8 +507,9 @@ wakeup1(void *chan)
 {
   struct proc *p;
 
+
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+    if(p->state == SLEEPING && p->chan == chan && ticks >= p->ticksleft)
       p->state = RUNNABLE;
 }
 
@@ -564,16 +579,5 @@ procdump(void)
         cprintf(" %p", pc[i]);
     }
     cprintf("\n");
-  }
-}
-
-// Adding function
-void recalculate_priority(void) {
-  struct proc *p;
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-    if(p->state != UNUSED) {
-      p->cpu = p->cpu / 2;
-      p->priority = p->cpu / 2 + p->nice;
-    }
   }
 }
